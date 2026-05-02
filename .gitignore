@@ -1,0 +1,11 @@
+# Data and results
+data/*
+!data/robot.json
+answer_results/
+query_results/
+chroma_db/
+
+# Python
+__pycache__/
+*.pyc
+.env
