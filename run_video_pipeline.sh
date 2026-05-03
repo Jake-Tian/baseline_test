@@ -54,25 +54,27 @@ process_one_video() {
     return 1
   fi
 
-  # Step 3: Build memory
-  echo "Generating memory for ${video}..."
-  if python3 process_full_video.py --video_name "${video}"; then
-    echo "✓ [${video}] Memory generated"
-  else
-    echo "✗ [${video}] Memory generation failed"
-    cleanup_video "$video"
-    return 1
-  fi
+  for MODEL in "gpt" "gemini"; do
+    # Step 3: Build memory
+    echo "Generating memory for ${video} using ${MODEL}..."
+    if python3 process_full_video.py --video_name "${video}" --model "${MODEL}"; then
+      echo "✓ [${video}] Memory generated (${MODEL})"
+    else
+      echo "✗ [${video}] Memory generation failed (${MODEL})"
+      cleanup_video "$video"
+      return 1
+    fi
 
-  # Step 4: Answer questions with reason.py
-  echo "Running reasoning for ${video}..."
-  if python3 reason.py --name "${video}"; then
-    echo "✓ [${video}] Reasoning complete"
-  else
-    echo "✗ [${video}] Reasoning failed"
-    cleanup_video "$video"
-    return 1
-  fi
+    # Step 4: Answer questions with reason.py
+    echo "Running reasoning for ${video} using ${MODEL}..."
+    if python3 reason.py --name "${video}" --model "${MODEL}"; then
+      echo "✓ [${video}] Reasoning complete (${MODEL})"
+    else
+      echo "✗ [${video}] Reasoning failed (${MODEL})"
+      cleanup_video "$video"
+      return 1
+    fi
+  done
 
   # Step 5: Cleanup to free storage
   cleanup_video "$video"

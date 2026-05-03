@@ -5,24 +5,26 @@ from pathlib import Path
 from tqdm import tqdm
 import numpy as np
 
-from egorag.models.llm import generate_text_response, get_multiple_embeddings, get_embedding
+from utils.llm import generate_text_response, get_multiple_embeddings, get_embedding
 
-def verify_answer(generated_answer: str, ground_truth: str) -> bool:
+def verify_answer(generated_answer: str, ground_truth: str, model: str) -> tuple[bool, int]:
     prompt = f"Given the ground truth answer: '{ground_truth}', is the following generated answer correct and semantically equivalent? Generated answer: '{generated_answer}'. Output ONLY 'yes' or 'no'."
     try:
-        response, _ = generate_text_response(prompt)
-        return 'yes' in response.lower()
+        response, tokens = generate_text_response(prompt, model=model)
+        return 'yes' in response.lower(), tokens
     except Exception as e:
         print(f"LLM verification failed: {e}")
-        return False
+        return False, 0
 
 def main():
     parser = argparse.ArgumentParser(description="Simplified EgoRAG Reasoning.")
     parser.add_argument("--name", type=str, required=True, help="Name of the video")
+    parser.add_argument("--model", type=str, choices=["gpt", "gemini"], default="gpt", help="Model to use")
     args = parser.parse_args()
 
     video_name = args.name
-    memory_path = Path(f"data/memorization/{video_name}.json")
+    model = args.model
+    memory_path = Path(f"data/memorization_{model}/{video_name}.json")
     query_json_path = "data/robot.json"
     
     if not memory_path.exists():
@@ -44,7 +46,7 @@ def main():
     sentence_embeddings = []
     if len(all_sentences) > 0:
         batch_size = 100
-        print("Embedding memory sentences...")
+        print(f"Embedding memory sentences ({model})...")
         for i in tqdm(range(0, len(all_sentences), batch_size)):
             batch_sentences = all_sentences[i:i+batch_size]
             try:
@@ -70,14 +72,15 @@ def main():
         print(f"No queries found for {video_name}")
         return
 
-    output_dir = Path("data/reason")
+    output_dir = Path(f"data/reason_{model}")
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / f"{video_name}.json"
     
     results = {}
+    total_tokens = 0
     
-    print("Processing queries...")
-    for qa in tqdm(qa_list, desc="Reasoning"):
+    print(f"Processing queries with {model}...")
+    for qa in tqdm(qa_list, desc=f"Reasoning ({model})"):
         question = qa["question"]
         question_id = qa.get("question_id", question)
         ground_truth = qa["answer"]
@@ -99,17 +102,19 @@ def main():
             
         # Put into prompt combined with query
         context = "\n".join([f"- {s}" for s in retrieved_sentences])
-        prompt = f"Based on the following retrieved memories from a video:\n{context}\n\nAnswer the question: {question}"
+        prompt = f"Based on the following retrieved memories from a video:\n{context}\n\nAnswer the question: {question}. \nThe answer should be concise. The answer like 'I don't know' or 'insufficient information' is not allowed."
         
         # Call LLM first time: generate answer
         try:
-            generated_answer, _ = generate_text_response(prompt)
+            generated_answer, tokens1 = generate_text_response(prompt, model=model)
+            total_tokens += tokens1
         except Exception as e:
             print(f"LLM failed to generate answer: {e}")
             generated_answer = ""
         
         # Call LLM second time: verify
-        is_correct = verify_answer(generated_answer, ground_truth)
+        is_correct, tokens2 = verify_answer(generated_answer, ground_truth, model=model)
+        total_tokens += tokens2
         
         results[question_id] = {
             "question": question,
@@ -122,7 +127,7 @@ def main():
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(results, f, ensure_ascii=False, indent=4)
         
-    print(f"Reasoning complete for {video_name}! Results saved to {output_path}")
+    print(f"Reasoning complete for {video_name} using {model}! Results saved to {output_path}. Total tokens used: {total_tokens}")
 
 if __name__ == "__main__":
     main()

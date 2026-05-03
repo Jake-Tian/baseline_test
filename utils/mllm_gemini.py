@@ -5,29 +5,23 @@ import time
 import numpy as np
 from openai import OpenAI
 
-def get_response(messages, text_format=None):
+
+def get_response(messages):
+
     client = OpenAI()
-    if text_format is None:
-        response = client.responses.create(
-            model="gpt-5-mini",
-            input=messages,
-        )
-        return response.output_text, getattr(response.usage, "total_tokens", None) or 0
-    else:
-        response = client.responses.parse(
-            model="gpt-5-mini",
-            input=messages,
-            text_format=text_format,
-        )
-        return response.output_parsed, getattr(response.usage, "total_tokens", None) or 0
+    response = client.chat.completions.create(
+        model="gemini-2.5-pro",
+        messages=messages,
+    )
+    return response.choices[0].message.content, getattr(response.usage, "total_tokens", None) or 0
 
-
-def generate_messages(images, prompt):
+def generate_messages(images, prompt, max_frames=None):
     """
     Build messages from images (numpy arrays) or image paths.
     Args:
         images: np.ndarray, path, directory, or iterable of these
         prompt: text prompt
+        max_frames: If set, use at most this many frames (evenly subsampled). Helps avoid 503 when folder has many images.
     """
     # Normalize to list
     if isinstance(images, (str, Path, np.ndarray)):
@@ -56,6 +50,15 @@ def generate_messages(images, prompt):
     if not imgs:
         raise ValueError("No images provided.")
 
+    # Use only half the images
+    if len(imgs) > 1:
+        imgs = imgs[::2]
+
+    if max_frames is not None and len(imgs) > max_frames:
+        step = len(imgs) / max_frames
+        indices = [int(i * step) for i in range(max_frames)]
+        imgs = [imgs[i] for i in indices]
+
     # Encode images to base64
     base64Frames = []
     for img in imgs:
@@ -66,13 +69,15 @@ def generate_messages(images, prompt):
 
     content = [
         {
-            "type": "input_text",
+            "type": "text",
             "text": prompt
         },
         *[
             {
-                "type": "input_image",
-                "image_url": f"data:image/jpeg;base64,{frame}"
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:image/jpeg;base64,{frame}"
+                }
             }
             for frame in base64Frames
         ]
@@ -83,3 +88,16 @@ def generate_messages(images, prompt):
         "content": content
     }]
     return messages
+
+
+if __name__ == "__main__":
+    start_time = time.time()
+
+    from prompts import prompt_generate_episodic_memory, character_matching_information
+    
+    messages = generate_messages("../data/frames/bedroom_01_10min", character_matching_information + prompt_generate_episodic_memory)
+    response = get_response(messages)
+    print(response)
+    
+    elapsed_time = time.time() - start_time
+    print(f"Time taken: {elapsed_time} seconds")

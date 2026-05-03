@@ -1,20 +1,19 @@
 from openai import OpenAI
 
-def generate_text_response(prompt, text_format=None):
+def generate_text_response(prompt, model="gpt"):
     client = OpenAI()
-    if text_format is None:
+    if model == "gemini":
+        response = client.chat.completions.create(
+            model="gemini-2.5-pro",
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return response.choices[0].message.content, getattr(response.usage, "total_tokens", None) or 0
+    else:
         response = client.responses.create(
             model="gpt-4o-mini",
             input=prompt,
         )
-        return response.output_text, response.usage.total_tokens
-    else:
-        response = client.responses.parse(
-            model="gpt-4o-mini",
-            input=prompt,
-            text_format=text_format,
-        )
-        return response.output_parsed, response.usage.total_tokens
+        return response.output_text, getattr(response.usage, "total_tokens", None) or 0
 
 def get_embedding(text):
     client = OpenAI()
