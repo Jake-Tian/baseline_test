@@ -1,98 +1,85 @@
-from __future__ import annotations
-
-import io
-import os
-import base64
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
-
+import base64
+import cv2
+import time
 import numpy as np
 from openai import OpenAI
-from PIL import Image
 
-def _default_mllm_model() -> str:
-    return os.getenv("EGOLIFE_OPENAI_MLLM_MODEL", "gpt-5-mini")
-
-def get_response(
-    messages: List[Dict[str, Any]],
-    text_format: Optional[type] = None,
-    model: Optional[str] = None,
-    **kwargs: Any,
-) -> Tuple[Any, int]:
-    """
-    Standard OpenAI chat completions wrapper for multimodal inputs.
-    """
+def get_response(messages, text_format=None):
     client = OpenAI()
-    model_name = model or _default_mllm_model()
-
     if text_format is None:
-        response = client.chat.completions.create(
-            model=model_name,
-            messages=messages,
-            **kwargs,
+        response = client.responses.create(
+            model="gpt-5-mini",
+            input=messages,
         )
-        output_text = response.choices[0].message.content
-        tokens = int(getattr(response, "usage", None).total_tokens if getattr(response, "usage", None) else 0)
-        return output_text, tokens
+        return response.output_text, getattr(response.usage, "total_tokens", None) or 0
+    else:
+        response = client.responses.parse(
+            model="gpt-5-mini",
+            input=messages,
+            text_format=text_format,
+        )
+        return response.output_parsed, getattr(response.usage, "total_tokens", None) or 0
 
-    # For structured output (parse)
-    response = client.beta.chat.completions.parse(
-        model=model_name,
-        messages=messages,
-        response_format=text_format,
-        **kwargs,
-    )
-    output_parsed = response.choices[0].message.parsed
-    tokens = int(getattr(response, "usage", None).total_tokens if getattr(response, "usage", None) else 0)
-    return output_parsed, tokens
 
-def generate_messages(
-    images: Union[Any, str, Path, np.ndarray, Image.Image, List[Any]],
-    prompt: str,
-) -> List[Dict[str, Any]]:
+def generate_messages(images, prompt):
     """
-    Build standard OpenAI chat messages for multimodal (text + images).
+    Build messages from images (numpy arrays) or image paths.
+    Args:
+        images: np.ndarray, path, directory, or iterable of these
+        prompt: text prompt
     """
-    if not isinstance(images, list):
+    # Normalize to list
+    if isinstance(images, (str, Path, np.ndarray)):
         images = [images]
 
-    content: List[Dict[str, Any]] = [
-        {"type": "text", "text": prompt},
-    ]
-
+    # Collect image arrays (BGR)
+    imgs = []
     for item in images:
-        img = None
-        if isinstance(item, Image.Image):
-            img = item.convert("RGB")
-        elif isinstance(item, np.ndarray):
-            img = Image.fromarray(item).convert("RGB")
+        if isinstance(item, np.ndarray):
+            imgs.append(item)
         else:
             p = Path(item)
             if p.is_dir():
                 paths = sorted([x for x in p.iterdir() if x.suffix.lower() in [".jpg", ".jpeg"]])
                 for img_path in paths:
-                    try:
-                        img_obj = Image.open(img_path).convert("RGB")
-                        buffer = io.BytesIO()
-                        img_obj.save(buffer, format="JPEG")
-                        base64_img = base64.b64encode(buffer.getvalue()).decode("utf-8")
-                        content.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}"}})
-                    except Exception:
-                        pass
-                continue
+                    img = cv2.imread(str(img_path))
+                    if img is None:
+                        raise ValueError(f"Could not read image: {img_path}")
+                    imgs.append(img)
             else:
-                try:
-                    img = Image.open(p).convert("RGB")
-                except Exception:
-                    continue
+                img = cv2.imread(str(p))
+                if img is None:
+                    raise ValueError(f"Could not read image: {p}")
+                imgs.append(img)
 
-        if img is not None:
-            buffer = io.BytesIO()
-            img.save(buffer, format="JPEG")
-            base64_img = base64.b64encode(buffer.getvalue()).decode("utf-8")
-            content.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}"}})
+    if not imgs:
+        raise ValueError("No images provided.")
 
-    if len(content) == 1:
-        raise ValueError("No images provided or failed to load.")
+    # Encode images to base64
+    base64Frames = []
+    for img in imgs:
+        success, buffer = cv2.imencode(".jpg", img)
+        if not success:
+            raise ValueError("Failed to encode image array to JPG.")
+        base64Frames.append(base64.b64encode(buffer).decode("utf-8"))
 
-    return [{"role": "user", "content": content}]
+    content = [
+        {
+            "type": "input_text",
+            "text": prompt
+        },
+        *[
+            {
+                "type": "input_image",
+                "image_url": f"data:image/jpeg;base64,{frame}"
+            }
+            for frame in base64Frames
+        ]
+    ]
+
+    messages = [{
+        "role": "user",
+        "content": content
+    }]
+    return messages

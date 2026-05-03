@@ -64,9 +64,9 @@ process_one_video() {
     return 1
   fi
 
-  # Step 4: Answer questions with main.py
+  # Step 4: Answer questions with reason.py
   echo "Running reasoning for ${video}..."
-  if python3 main.py --name "${video}" --stage query answer; then
+  if python3 reason.py --name "${video}"; then
     echo "✓ [${video}] Reasoning complete"
   else
     echo "✗ [${video}] Reasoning failed"
